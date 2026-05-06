@@ -53,7 +53,7 @@ That's it! The program will guide you through everything:
 
 - **Hardware:** BBC micro:bit V2 + USB cable
 - **Software:** Python 3.7+, [micro:bit Python Editor V3](https://python.microbit.org/v/3)
-- **Packages:** `pip install pyserial`
+- **Packages:** `pip install pyserial numpy`
 
 ## Troubleshooting
 
