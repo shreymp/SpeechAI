@@ -1,8 +1,10 @@
 """
-Fuzzy Logic Voice Classifier — PC Server
-=========================================
-Receives audio from micro:bit via USB serial, runs fuzzy classification,
-and sends results back. Can be called from run.py via run_server().
+Fuzzy Logic Voice Classifier — PC Server (5-Class)
+====================================================
+Receives audio from micro:bit via USB serial, runs 5-class fuzzy
+classification, and sends results back.
+
+Can be called from START_HERE.py via run_server() or standalone.
 """
 
 import serial
@@ -11,141 +13,24 @@ import time
 import os
 import json
 
+from src.features import extract_features_v2
+from src.fuzzy_engine import (
+    CLASSES_5, RESULT_TAGS_5, DEFAULT_PARAMS_5,
+    fuzzy_classify_5,
+)
+from src.calibrator import NoiseCalibration, SessionLogger
+from src.visualizer import display_classification_result
+from src.serial_utils import get_microbit_port
+
 BAUD_RATE = 115200
-SPEECH_THRESHOLD = 40
-CLASSES = ["Background Noise", "Confident Speaking", "Hesitant Speaking"]
-RESULT_TAGS = ["BACKGROUND", "CONFIDENT", "HESITANT"]
-R6_WEIGHT = 0.6
-
-# Default membership function parameters
-DEFAULT_PARAMS = {
-    "LEVEL_LOW": (0, 0, 50), "LEVEL_MED": (20, 70, 130), "LEVEL_HIGH": (80, 160, 255),
-    "RATIO_LOW": (0.0, 0.0, 0.25), "RATIO_MED": (0.10, 0.40, 0.70), "RATIO_HIGH": (0.50, 0.80, 1.0),
-    "GAPS_FEW": (0, 0, 4), "GAPS_SOME": (2, 6, 12), "GAPS_MANY": (8, 15, 25),
-    "VAR_LOW": (0, 0, 500), "VAR_MED": (200, 1000, 2500), "VAR_HIGH": (1500, 3500, 6000),
-}
-
-
-def tri_mf(x, a, b, c):
-    """Triangular membership function → [0.0, 1.0]"""
-    if x <= a or x >= c:
-        return 0.0
-    elif a < x <= b:
-        return (x - a) / (b - a) if b != a else 1.0
-    else:
-        return (c - x) / (c - b) if c != b else 1.0
-
-
-def left_mf(x, a, b, c):
-    """Left shoulder membership function → [0.0, 1.0]"""
-    if x <= b:
-        return 1.0
-    elif x >= c:
-        return 0.0
-    else:
-        return (c - x) / (c - b) if c != b else 1.0
-
-
-def right_mf(x, a, b, c):
-    """Right shoulder membership function → [0.0, 1.0]"""
-    if x <= a:
-        return 0.0
-    elif x >= b:
-        return 1.0
-    else:
-        return (x - a) / (b - a) if b != a else 1.0
-
-
-def extract_features(samples):
-    """Extract features from raw sound level values (0-255)."""
-    n = len(samples)
-    if n == 0:
-        return {"avg_level": 0, "speech_ratio": 0.0, "num_gaps": 0, "variance": 0}
-    avg = sum(samples) / n
-    variance = sum((s - avg) ** 2 for s in samples) / n
-    above_count = 0
-    num_gaps = 0
-    in_gap = True
-    for s in samples:
-        if s >= SPEECH_THRESHOLD:
-            above_count += 1
-            if in_gap:
-                in_gap = False
-        else:
-            if not in_gap:
-                num_gaps += 1
-                in_gap = True
-    speech_ratio = above_count / n
-    return {"avg_level": avg, "speech_ratio": speech_ratio, "num_gaps": num_gaps, "variance": variance}
-
-
-def fuzzy_classify(features, params):
-    """Run Mamdani-style fuzzy inference. Returns (class_idx, confidence%, details)."""
-    avg = features["avg_level"]
-    ratio = features["speech_ratio"]
-    gaps = features["num_gaps"]
-    var = features["variance"]
-
-    lvl_lo = left_mf(avg, *params["LEVEL_LOW"])
-    lvl_md = tri_mf(avg, *params["LEVEL_MED"])
-    lvl_hi = right_mf(avg, *params["LEVEL_HIGH"])
-    rat_lo = left_mf(ratio, *params["RATIO_LOW"])
-    rat_md = tri_mf(ratio, *params["RATIO_MED"])
-    rat_hi = right_mf(ratio, *params["RATIO_HIGH"])
-    gap_fw = left_mf(gaps, *params["GAPS_FEW"])
-    gap_sm = tri_mf(gaps, *params["GAPS_SOME"])
-    gap_mn = right_mf(gaps, *params["GAPS_MANY"])
-    var_lo = left_mf(var, *params["VAR_LOW"])
-    var_md = tri_mf(var, *params["VAR_MED"])
-    var_hi = right_mf(var, *params["VAR_HIGH"])
-
-    r6_weight = params.get("_r6_weight", R6_WEIGHT)
-    r1 = min(lvl_lo, rat_lo)
-    r6 = min(lvl_lo, rat_md) * r6_weight
-    r2 = min(lvl_hi, rat_hi, gap_fw)
-    r5 = min(lvl_md, rat_md, var_lo)
-    r3 = min(rat_md, gap_mn)
-    r4 = min(var_hi, gap_sm)
-
-    scores = [max(r1, r6), max(r2, r5), max(r3, r4)]
-    total = sum(scores)
-    best_idx = max(range(3), key=lambda i: scores[i])
-    confidence = int((scores[best_idx] / total) * 100) if total > 0 else 0
-
-    details = {
-        "scores": {CLASSES[i]: round(scores[i], 4) for i in range(3)},
-        "memberships": {
-            "level": (round(lvl_lo, 3), round(lvl_md, 3), round(lvl_hi, 3)),
-            "ratio": (round(rat_lo, 3), round(rat_md, 3), round(rat_hi, 3)),
-            "gaps": (round(gap_fw, 3), round(gap_sm, 3), round(gap_mn, 3)),
-            "var": (round(var_lo, 3), round(var_md, 3), round(var_hi, 3)),
-        },
-        "rules": {"R1": round(r1, 4), "R2": round(r2, 4), "R3": round(r3, 4),
-                  "R4": round(r4, 4), "R5": round(r5, 4), "R6": round(r6, 4)},
-    }
-    return best_idx, confidence, details
-
-
-def get_microbit_port():
-    """Auto-detect micro:bit serial port (Windows, Mac, Linux)."""
-    ports = list(serial.tools.list_ports.comports())
-    for p in ports:
-        # Check VID/PID (0x0D28:0x0204 is the standard micro:bit identifier)
-        if p.vid == 0x0D28 and p.pid == 0x0204:
-            return p.device
-        # Check description for common micro:bit/mbed strings
-        desc = p.description.lower()
-        if "micro:bit" in desc or "mbed" in desc:
-            return p.device
-        # Check device name (Mac /dev/cu.usbmodemXXXX)
-        if "usbmodem" in p.device.lower():
-            return p.device
-    return None
+RECORDING_TIMEOUT = 10  # seconds — abort if no END_STREAM received
+MAX_PORT_RETRIES = 30  # max iterations waiting for micro:bit
 
 
 def load_params(trained_params_path):
-    """Load trained parameters if available, else use defaults."""
-    params = DEFAULT_PARAMS.copy()
+    """Load trained 5-class parameters if available, else use defaults."""
+    params = DEFAULT_PARAMS_5.copy()
+    rule_weights = None
 
     if os.path.exists(trained_params_path):
         try:
@@ -155,52 +40,62 @@ def load_params(trained_params_path):
             for key in params:
                 if key in trained:
                     params[key] = tuple(trained[key])
-            r6 = data.get("r6_weight", R6_WEIGHT)
-            params["_r6_weight"] = r6
-            acc = data.get("accuracy", "?")
-            print(f"  Loaded trained parameters (accuracy: {acc})")
-            return params
+            rule_weights = data.get("rule_weights", None)
+            acc = data.get("accuracy", None)
+            if isinstance(acc, (int, float)):
+                print(f"  Loaded trained AI (accuracy: {acc * 100:.1f}%)")
+            else:
+                print(f"  Loaded trained AI parameters.")
+            return params, rule_weights
         except Exception as e:
-            print(f"  Warning: Could not load trained params: {e}")
+            print(f"  Warning: Could not load saved AI data. Using defaults.")
 
-    print("  Using default parameters.")
-    return params
+    print("  Using default 5-class parameters.")
+    return params, rule_weights
 
 
 def run_server(trained_params_path):
     """
-    Start the classification server. Connects to micro:bit and listens
-    for audio streams.
+    Start the 5-class classification server. Connects to micro:bit
+    and listens for audio streams.
 
     Args:
         trained_params_path: Path to trained_params.json
     """
     print()
     print("=" * 60)
-    print("  Fuzzy Logic Voice Classifier — PC Server")
+    print("  Fuzzy Logic Voice Classifier — 5-Class PC Server")
     print("=" * 60)
 
     # Load parameters
-    params = load_params(trained_params_path)
+    params, rule_weights = load_params(trained_params_path)
+
+    # Set up data directory for session logging
+    data_dir = os.path.dirname(trained_params_path)
+    calibrator = NoiseCalibration(data_dir)
+    logger = SessionLogger(data_dir)
 
     # Connect to micro:bit
     port = get_microbit_port()
+    port_attempts = 0
     while not port:
+        port_attempts += 1
+        if port_attempts > MAX_PORT_RETRIES:
+            print("  ERROR: micro:bit not found after 60 seconds.")
+            print("  Make sure it's plugged in and FLASH_TO_MICROBIT.py is flashed.")
+            return
         print("  Waiting for micro:bit... (connect via USB)")
-        print("  Make sure FLASH_TO_MICROBIT.py is flashed on the micro:bit!")
         time.sleep(2)
         port = get_microbit_port()
 
     print(f"  Connecting to {port}...")
     try:
         ser = serial.Serial(port, BAUD_RATE, timeout=0.1)
-        time.sleep(2)  # Allow micro:bit to reset
-        
-        # Command micro:bit to enter UI mode
+        time.sleep(2)
         ser.write(b"CMD_MODE_UI\n")
         ser.flush()
     except Exception as e:
-        print(f"  Serial error: {e}")
+        print(f"  ❌ Connection error. Make sure the micro:bit is plugged in and no other program is using it.")
         return
 
     print("  Server ready! Listening for commands...")
@@ -216,6 +111,7 @@ def run_server(trained_params_path):
     is_recording = False
     start_rec_time = 0
     buffer_tail = b""
+    last_samples = None
     last_features = None
 
     while True:
@@ -233,32 +129,57 @@ def run_server(trained_params_path):
                             is_recording = False
                             duration = time.time() - start_rec_time
                             raw_bytes = combined.split(b"END_STREAM")[0]
-                            if raw_bytes.startswith(b'\n'):
-                                raw_bytes = raw_bytes[1:]
-                            samples = list(raw_bytes)
-                            print(f"  Recording received: {len(samples)} samples in {duration:.1f}s")
-                            last_features = extract_features(samples)
-                            print(f"  Features:")
-                            print(f"    avg_level:    {last_features['avg_level']:.1f}")
-                            print(f"    speech_ratio: {last_features['speech_ratio']:.2f}")
-                            print(f"    num_gaps:     {last_features['num_gaps']}")
-                            print(f"    variance:     {last_features['variance']:.0f}")
+                            # Strip leading START_STREAM\n marker sent before recording
+                            if raw_bytes.startswith(b"START_STREAM\n"):
+                                raw_bytes = raw_bytes[len(b"START_STREAM\n"):]
+                            # Strip trailing padding (\x00 bytes + newlines)
+                            raw_bytes = raw_bytes.rstrip(b'\x00\n')
+                            last_samples = list(raw_bytes)
+                            print(f"  ✅ Audio received ({duration:.1f}s). Analyzing...")
+
+                            # Extract features with current noise floor (needed to
+                            # determine response latency for ambient calibration)
+                            last_features = extract_features_v2(
+                                last_samples,
+                                noise_floor=calibrator.get_noise_floor()
+                            )
+
+                            # Calibrate noise floor using samples before speech onset.
+                            # Uses response_latency to determine how many initial
+                            # samples are truly ambient, avoiding the feedback loop
+                            # where speech contaminates the noise floor estimate.
+                            latency_ms = last_features.get('response_latency', 600)
+                            n_ambient = max(10, int(latency_ms / 20))
+                            calibrator.calibrate_from_recording_start(last_samples, n_samples=n_ambient)
+
+                            # Re-extract features with updated noise floor for accuracy
+                            last_features = extract_features_v2(
+                                last_samples,
+                                noise_floor=calibrator.get_noise_floor()
+                            )
+
+                            print(f"  📊 Audio analyzed. Press B on micro:bit to classify.")
+
                             ser.write(b"STATUS_REC_DONE\n")
-                            print(f"  -> Sent: STATUS_REC_DONE")
                             recording_data = []
                             buffer_tail = b""
+                elif time.time() - start_rec_time > RECORDING_TIMEOUT:
+                    # Timeout — no END_STREAM received (micro:bit may have disconnected)
+                    is_recording = False
+                    print(f"  ⚠️  Recording timeout ({RECORDING_TIMEOUT}s) — no END_STREAM received.")
+                    recording_data = []
+                    buffer_tail = b""
             else:
                 if ser.in_waiting > 0:
                     try:
                         line = ser.readline()
                         try:
                             line_str = line.decode('utf-8').strip()
-                        except Exception:
+                        except UnicodeDecodeError:
                             line_str = ""
                         if line_str:
-                            print(f"  Received: {line_str}")
                             if line_str == "START_STREAM":
-                                print("\n  -- Starting audio stream reception --")
+                                print("\n  🎤 Recording... Speak into the micro:bit now!")
                                 is_recording = True
                                 start_rec_time = time.time()
                                 recording_data = []
@@ -268,24 +189,31 @@ def run_server(trained_params_path):
                                     print("  No audio data. Record first.")
                                     ser.write(b"STATUS_ERROR\n")
                                 else:
-                                    print("\n  -- Running fuzzy classification --")
-                                    class_idx, confidence, details = fuzzy_classify(last_features, params)
-                                    class_name = CLASSES[class_idx]
-                                    result_tag = RESULT_TAGS[class_idx]
-                                    print(f"\n  ╔══════════════════════════════════════╗")
-                                    print(f"  ║  RESULT: {class_name:<28} ║")
-                                    print(f"  ║  Confidence: {confidence}%{' ' * (24 - len(str(confidence)))}║")
-                                    print(f"  ╚══════════════════════════════════════╝")
-                                    print(f"\n  Scores:")
-                                    for cls, score in details["scores"].items():
-                                        bar = "█" * int(score * 30)
-                                        print(f"    {cls:<22} {score:.4f}  {bar}")
-                                    print()
+                                    print("\n  🧠 Classifying your voice...")
+                                    class_idx, confidence, details = fuzzy_classify_5(
+                                        last_features, params, rule_weights
+                                    )
+                                    class_name = CLASSES_5[class_idx]
+                                    result_tag = RESULT_TAGS_5[class_idx]
+
+                                    display_classification_result(
+                                        class_idx, confidence, details, last_features
+                                    )
+
+                                    margin = details.get("margin", 0)
+                                    is_ambiguous = details.get("is_ambiguous", False)
+                                    logger.log_classification(
+                                        class_name, confidence, margin,
+                                        is_ambiguous, last_features
+                                    )
+
                                     msg = f"RESULT_{result_tag}:{confidence}\n"
                                     ser.write(msg.encode('utf-8'))
-                                    print(f"  -> Sent: {msg.strip()}")
-                    except Exception as e:
-                        print(f"  Serial read error: {e}")
+                    except serial.SerialException:
+                        print(f"  ⚠️ Serial connection lost during command processing.")
+                        raise
+                    except (KeyError, TypeError, ValueError) as e:
+                        print(f"  ⚠️ Classification error: {e}")
 
             time.sleep(0.01)
 
@@ -293,7 +221,7 @@ def run_server(trained_params_path):
             print("\n  Stopping server...")
             break
         except Exception as e:
-            print(f"  Loop error: {e}")
+            print(f"  ⚠️ Connection interrupted. Reconnecting...")
             try:
                 ser.close()
                 time.sleep(1)

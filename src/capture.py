@@ -1,12 +1,12 @@
 """
-Calibration Capture — PC Companion Script
-==========================================
-Connects to the micro:bit over USB serial while calibrate.py runs,
+Calibration Capture — PC Companion Script (5-Class)
+=====================================================
+Connects to the micro:bit over USB serial while calibration runs,
 captures all serial output, and saves:
   - calibration_data.json   (the JSON training data)
   - calibration_log.txt     (the full serial output log)
 
-Can be run standalone or called from run.py via run_capture().
+Can be run standalone or called from START_HERE.py via run_capture().
 
 Usage (standalone):
   python src/capture.py
@@ -23,68 +23,107 @@ import json
 import re
 from datetime import datetime
 
+from src.fuzzy_engine import CLASSES_5
+from src.serial_utils import get_microbit_port
+
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
 BAUD_RATE = 115200
+N_CLASSES = 5
+MAX_CAPTURE_RETRIES = 1
+
+# Class short letters for the micro:bit display
+CLASS_LETTERS = ["S", "C", "H", "A", "M"]  # Silence, Confident, Hesitant, Anxious, Monotone
 
 
 # ============================================================
-# SERIAL HELPERS
+# ROBUST MARKER DETECTION (handles micro:bit serial corruption)
 # ============================================================
 
-def get_microbit_port():
-    """Auto-detect micro:bit serial port (Windows, Mac, Linux)."""
-    ports = list(serial.tools.list_ports.comports())
-    for p in ports:
-        # Check VID/PID (0x0D28:0x0204 is the standard micro:bit identifier)
-        if p.vid == 0x0D28 and p.pid == 0x0204:
-            return p.device
-        # Check description for common micro:bit/mbed strings
-        desc = p.description.lower()
-        if "micro:bit" in desc or "mbed" in desc:
-            return p.device
-        # Check device name (Mac /dev/cu.usbmodemXXXX)
-        if "usbmodem" in p.device.lower():
-            return p.device
-    return None
+def _is_json_data_marker(line):
+    """Detect JSON DATA marker despite serial corruption at 115200 baud.
+
+    The micro:bit sends '--- JSON DATA ---' but UART corruption
+    commonly drops characters (e.g. '--- JSN DATA ---').
+    We check for the structural pattern '--- ... DATA' instead.
+    """
+    stripped = line.strip()
+    return stripped.startswith("---") and "DATA" in stripped
+
+
+def _is_calibration_complete(line):
+    """Detect CALIBRATION COMPLETE marker despite serial corruption.
+
+    The micro:bit sends 'CALIBRATION COMPLETE' but UART corruption
+    commonly drops characters (e.g. 'CALIBRATION COMLETE').
+    Uses prefix detection to distinguish from 'Starting Calibration...'.
+    """
+    l = line.upper().strip()
+    if "CALIBRATION" not in l and "ALIBRATION" not in l:
+        return False
+    # Find position of the calibration word
+    cal_pos = l.find("CALIBRATION")
+    if cal_pos == -1:
+        cal_pos = l.find("ALIBRATION")
+    # "Starting Calibration..." has text before "CALIBRATION"
+    if cal_pos > 0 and l[:cal_pos].strip():
+        return False
+    return True
+
+
+class SerialCaptureStats:
+    """Tracks serial health during a capture session for diagnostics."""
+
+    def __init__(self):
+        self.total_lines = 0
+        self.decode_errors = 0
+        self.empty_lines = 0
+        self.json_marker_detected = False
+        self.calibration_complete = False
+        self.idle_timeout_triggered = False
+        self.disconnect_triggered = False
+
+    def report(self):
+        if self.total_lines == 0:
+            return
+        corruption_rate = self.decode_errors / max(self.total_lines, 1)
+        diagnostics = []
+        if self.decode_errors:
+            diagnostics.append(f"{self.decode_errors} decode errors ({corruption_rate:.1%})")
+        if self.empty_lines:
+            diagnostics.append(f"{self.empty_lines} empty lines")
+        if not self.json_marker_detected:
+            diagnostics.append("JSON marker not detected")
+        if self.idle_timeout_triggered:
+            diagnostics.append("idle timeout")
+        if self.disconnect_triggered:
+            diagnostics.append("disconnect")
+        if diagnostics:
+            print(f"  [i] Serial diagnostics: {', '.join(diagnostics)}")
+        self._clear()
+
+    def _clear(self):
+        self.total_lines = 0
+        self.decode_errors = 0
+        self.empty_lines = 0
+        self.json_marker_detected = False
+        self.calibration_complete = False
+        self.idle_timeout_triggered = False
+        self.disconnect_triggered = False
 
 
 # ============================================================
 # JSON EXTRACTION
 # ============================================================
 
-def extract_json_from_log(lines):
-    """
-    Find the JSON block in the captured serial output.
-    The micro:bit prints it between the JSON DATA markers.
-    """
-    json_lines = []
-    capturing = False
-
-    for line in lines:
-        if "JSON DATA" in line:
-            capturing = True
-            continue
-        if capturing:
-            # Stop at the next separator or empty marker
-            if line.startswith("=" * 10) or line.startswith("--- Parameters") or "CALIBRATION COMPLETE" in line:
-                break
-            stripped = line.strip()
-            if stripped:
-                json_lines.append(stripped)
-
-    if not json_lines:
-        return None
-
-    json_text = "\n".join(json_lines)
+def _try_parse_json(json_text):
+    """Try to parse JSON text, with trailing-comma recovery."""
     try:
-        data = json.loads(json_text)
-        return data
+        return json.loads(json_text)
     except json.JSONDecodeError:
-        # Try to fix common issues from serial corruption
         fixed = re.sub(r',\s*([}\]])', r'\1', json_text)
         try:
             return json.loads(fixed)
@@ -92,122 +131,184 @@ def extract_json_from_log(lines):
             return None
 
 
+def _extract_json_standard(lines):
+    """Extract JSON using the --- JSON DATA --- marker (robust to serial corruption)."""
+    json_lines = []
+    capturing = False
+    for line in lines:
+        if _is_json_data_marker(line):
+            capturing = True
+            continue
+        if capturing:
+            if line.startswith("=" * 10) or "--- Parameters" in line or _is_calibration_complete(line):
+                break
+            stripped = line.strip()
+            if stripped:
+                json_lines.append(stripped)
+    if not json_lines:
+        return None
+    return _try_parse_json("\n".join(json_lines))
+
+
+def _extract_json_by_structure(lines):
+    """
+    Fallback: find JSON by looking for lines that start with '{'.
+    Also uses early-parse detection to stop as soon as valid JSON
+    is assembled, making it robust against corrupted CALIBRATION COMPLETE
+    markers (a known issue with micro:bit V2 UART at 115200 baud).
+    """
+    json_lines = []
+    capturing = False
+    for line in lines:
+        stripped = line.strip()
+        if not capturing and stripped.startswith("{"):
+            capturing = True
+            json_lines.append(stripped)
+            continue
+        if capturing:
+            if _is_calibration_complete(line):
+                break
+            if stripped:
+                json_lines.append(stripped)
+                # Early-parse: once the JSON object is complete (has ]}),
+                # try to parse immediately. This handles cases where the
+                # CALIBRATION COMPLETE marker is corrupted or missing.
+                result = _try_parse_json("\n".join(json_lines))
+                if result is not None:
+                    return result
+    if not json_lines:
+        return None
+    return _try_parse_json("\n".join(json_lines))
+
+
+def extract_json_from_log(lines):
+    """
+    Find the JSON block in the captured serial output.
+    The micro:bit prints it between the JSON DATA markers.
+
+    Tries multiple strategies:
+    1. Standard marker-based extraction (--- JSON DATA ---)
+    2. Structure-based extraction (find JSON by leading '{')
+       — handles corrupted/noisy marker lines
+    """
+    result = _extract_json_standard(lines)
+    if result is not None:
+        return result
+    result = _extract_json_by_structure(lines)
+    if result is not None:
+        return result
+    return None
+
+
 def extract_features_from_log(lines):
     """
-    Fallback: extract features directly from the 'Done! Features:' blocks
-    in the serial log, even if the JSON block is corrupted.
+    Fallback: extract features directly from the serial log,
+    even if the JSON block is corrupted.
     Returns a list of sample dicts if successful, None otherwise.
     """
     samples = []
-    current_phase = -1  # 0=BG, 1=Confident, 2=Hesitant
+    current_phase = -1
 
-    # Track which phase we're in
     for line in lines:
-        if "Phase 1:" in line or "BG Noise" in line:
+        # Detect phase from micro:bit output
+        if "Phase 1" in line or "Silence" in line or "BG Noise" in line:
             current_phase = 0
-        elif "Phase 2:" in line or "Confident" in line:
+        elif "Phase 2" in line or "Confident" in line:
             current_phase = 1
-        elif "Phase 3:" in line or "Hesitant" in line:
+        elif "Phase 3" in line or "Hesitant" in line:
             current_phase = 2
+        elif "Phase 4" in line or "Anxious" in line:
+            current_phase = 3
+        elif "Phase 5" in line or "Monotone" in line:
+            current_phase = 4
 
-        # Look for feature lines in the raw data section
-        if "avg=" in line and "ratio=" in line and "gaps=" in line and "var=" in line:
+        # Extract numbers positionally to avoid failing on text corruption (e.g. 'volume0.1' or 'enegy')
+        # Use both "Sample" and "volume" to handle serial corruption that drops
+        # characters from the "Sample" prefix (e.g. "Sampl" or "Smple") or the
+        # "=" sign in volume= (e.g. "volume3.8")
+        if ("Sample" in line or "volume" in line) and ":" in line:
             try:
-                # Parse: "  Sample N: avg=X  ratio=X  gaps=X  var=X"
-                parts = line.strip()
-                avg = float(re.search(r'avg[_=]*(\d+\.?\d*)', parts).group(1))
-                ratio = float(re.search(r'ratio[_=]*(\d+\.?\d*)', parts).group(1))
-                gaps = int(re.search(r'gaps[_=]*(\d+)', parts).group(1))
-                var = float(re.search(r'var[_=]*(\d+\.?\d*)', parts).group(1))
+                parts = line.split(":", 1)[1]
+                nums = re.findall(r'[-+]?\d*\.\d+|[-+]?\d+', parts)
+                if len(nums) >= 7 and current_phase >= 0:
+                    avg = float(nums[0])
+                    ratio = float(nums[1])
+                    gaps = int(float(nums[2]))
+                    var = float(nums[3])
+                    curv = float(nums[4])
+                    drift = float(nums[5])
+                    lat = int(float(nums[6]))
 
-                samples.append({
-                    "class": current_phase,
-                    "avg_level": avg,
-                    "speech_ratio": ratio,
-                    "num_gaps": gaps,
-                    "variance": var,
-                })
-            except (AttributeError, ValueError):
+                    samples.append({
+                        "class": current_phase,
+                        "avg_level": avg,
+                        "speech_ratio": ratio,
+                        "num_gaps": gaps,
+                        "variance": var,
+                        "prosody_curvature": curv,
+                        "intensity_drift": drift,
+                        "response_latency": lat,
+                        "speech_rate_variability": var / 500.0,
+                        "pause_duration_entropy": gaps * 0.1,
+                    })
+            except Exception:
                 continue
 
-    # Also try parsing from the "Done! Features:" blocks
-    if len(samples) < 9:
-        samples = []
-        current_phase = -1
-        pending_features = {}
-
-        for line in lines:
-            stripped = line.strip()
-
-            if "Phase 1:" in line:
-                current_phase = 0
-            elif "Phase 2:" in line:
-                current_phase = 1
-            elif "Phase 3:" in line:
-                current_phase = 2
-
-            # Parse individual feature lines
-            if "avg_level" in stripped and "=" in stripped:
-                try:
-                    val = float(re.search(r'=\s*(\d+\.?\d*)', stripped).group(1))
-                    pending_features["avg_level"] = val
-                except (AttributeError, ValueError):
-                    pass
-            elif "speech_ratio" in stripped and "=" in stripped:
-                try:
-                    val = float(re.search(r'=\s*(\d+\.?\d*)', stripped).group(1))
-                    pending_features["speech_ratio"] = val
-                except (AttributeError, ValueError):
-                    pass
-            elif "num_gaps" in stripped and "=" in stripped:
-                try:
-                    val = int(re.search(r'=\s*(\d+)', stripped).group(1))
-                    pending_features["num_gaps"] = val
-                except (AttributeError, ValueError):
-                    pass
-            elif "variance" in stripped and "=" in stripped:
-                try:
-                    val = float(re.search(r'=\s*(\d+\.?\d*)', stripped).group(1))
-                    pending_features["variance"] = val
-                except (AttributeError, ValueError):
-                    pass
-
-            # When we have all 4 features, save the sample
-            if len(pending_features) == 4 and current_phase >= 0:
-                pending_features["class"] = current_phase
-                samples.append(pending_features.copy())
-                pending_features = {}
-
-    return samples if len(samples) >= 9 else None
+    # Need at least some samples per class
+    min_samples = N_CLASSES * 3  # 3 per class minimum
+    return samples if len(samples) >= min_samples else None
 
 
 # ============================================================
 # MAIN CAPTURE FUNCTION
 # ============================================================
 
-def run_capture(data_dir, record_time=9):
+def run_capture(data_dir, record_time=15, _retries=MAX_CAPTURE_RETRIES):
     """
     Connect to micro:bit, capture calibration serial output, and save
     the JSON data to data_dir/calibration_data.json.
 
     Args:
         data_dir: Directory path to save output files.
+        record_time: Total recording time in seconds (default 15 for 5 classes).
+        _retries: Internal — number of automatic retries remaining.
 
     Returns:
         Path to the saved calibration_data.json, or None on failure.
     """
+    os.makedirs(data_dir, exist_ok=True)
+
+    # Retry loop replaces fragile recursion pattern
+    attempt = 0
+    while attempt <= _retries:
+        if attempt > 0:
+            print(f"\n  [!] Extraction failed. Retry {attempt}/{_retries}...")
+            print("  The micro:bit will restart. Press Button A when prompted.")
+            print()
+            time.sleep(3)
+        result = _run_capture_once(data_dir, record_time)
+        if result is not None:
+            return result
+        attempt += 1
+
+    print("\n  [✗] Data extraction failed after all retries.")
+    print("  The full serial log has been saved for debugging.")
+    return None
+
+
+def _run_capture_once(data_dir, record_time):
     json_output = os.path.join(data_dir, "calibration_data.json")
     log_output = os.path.join(data_dir, "calibration_log.txt")
 
-    os.makedirs(data_dir, exist_ok=True)
-
     print()
     print("=" * 60)
-    print("  Calibration Capture — Serial Logger")
+    print("  Calibration Capture — 5-Class Serial Logger")
     print("=" * 60)
     print()
     print("  This captures serial output from the micro:bit and")
     print("  saves calibration data automatically.")
+    print()
+    print(f"  Classes: {', '.join(CLASSES_5)}")
     print()
     print("  Make sure FLASH_TO_MICROBIT.py is FLASHED on the micro:bit!")
     print()
@@ -219,7 +320,7 @@ def run_capture(data_dir, record_time=9):
         attempt += 1
         if attempt == 1:
             print("  Waiting for micro:bit... (connect via USB)")
-        if attempt > 30:  # ~60 seconds
+        if attempt > 30:
             print("  ERROR: micro:bit not found after 60 seconds.")
             print("  Make sure it's plugged in and FLASH_TO_MICROBIT.py is flashed.")
             return None
@@ -230,15 +331,18 @@ def run_capture(data_dir, record_time=9):
     print()
 
     try:
-        ser = serial.Serial(port, BAUD_RATE, timeout=0.5)
-        time.sleep(2)  # Allow micro:bit to reset after connection
-        
+        try:
+            ser = serial.Serial(port, BAUD_RATE, timeout=0.5, rtscts=True)
+        except (ValueError, serial.SerialException, OSError):
+            ser = serial.Serial(port, BAUD_RATE, timeout=0.5)
+        time.sleep(2)
+
         # Command micro:bit to enter Calibration mode
         cmd = f"CMD_MODE_CALIBRATE:{record_time}\n"
         ser.write(cmd.encode('utf-8'))
         ser.flush()
     except Exception as e:
-        print(f"  Serial error: {e}")
+        print(f"  ❌ Connection error. Make sure the micro:bit is plugged in.")
         print("  Make sure no other program is using the serial port.")
         return None
 
@@ -247,11 +351,13 @@ def run_capture(data_dir, record_time=9):
     print()
     print("-" * 60)
 
+    stats = SerialCaptureStats()
     all_lines = []
-    calibration_complete = False
-    json_section_done = False
+    in_json_block = False
+    json_block_start = 0.0
     last_activity = time.time()
-    IDLE_TIMEOUT = 300  # 5 minutes
+    IDLE_TIMEOUT = 300
+    MAX_JSON_TIMEOUT = 30
 
     try:
         while True:
@@ -263,39 +369,76 @@ def run_capture(data_dir, record_time=9):
                     except Exception:
                         line = str(raw)
 
-                    # Print to terminal so user can see everything
-                    print(line)
+                    # Send ACK to micro:bit — confirms line receipt so it can
+                    # send the next line. This provides deterministic back-pressure
+                    # that prevents UART buffer overflow and character loss.
+                    if line.strip():
+                        try:
+                            ser.write(b'\x06')
+                            ser.flush()
+                        except Exception:
+                            pass
+
+                    stats.total_lines += 1
+                    if not line:
+                        stats.empty_lines += 1
+
+                    # Count decode errors: the 'replace' marker \ufffd indicates
+                    # bytes that could not be decoded as UTF-8
+                    if "\ufffd" in line:
+                        stats.decode_errors += 1
+
+                    # Always capture the line for JSON extraction
                     all_lines.append(line)
                     last_activity = time.time()
 
-                    if "CALIBRATION COMPLETE" in line:
-                        calibration_complete = True
-
-                    # Detect end of JSON block (last line is " ]}")
-                    if calibration_complete and ("]}" in line):
-                        json_section_done = True
-
-                    if json_section_done and (time.time() - last_activity > 2):
+                    # --- UI filtering: hide raw JSON from the student ---
+                    if _is_json_data_marker(line):
+                        stats.json_marker_detected = True
+                        in_json_block = True
+                        json_block_start = time.time()
+                        print("  📦 Transmitting voice data to PC...", end="", flush=True)
+                    elif _is_calibration_complete(line):
+                        stats.calibration_complete = True
+                        in_json_block = False
+                        print("\n")
                         break
+                    elif not in_json_block and line.strip().startswith("{"):
+                        # JSON DATA marker was corrupted, detect by content
+                        in_json_block = True
+                        json_block_start = time.time()
+                        print("  📦 Transmitting voice data to PC...", end="", flush=True)
+                    elif in_json_block:
+                        if "Traceback" in line or "MemoryError" in line or "Exception" in line:
+                            print(f"\n  [!] Micro:bit crashed during transmission: {line}")
+                            break
+                        # Safety timeout: if all markers are corrupted,
+                        # don't wait longer than 30 seconds for JSON to finish
+                        if time.time() - json_block_start > MAX_JSON_TIMEOUT:
+                            print("\n  [i] JSON transmission complete (timeout).")
+                            break
+                        # Silently capture JSON lines — don't show to student
+                        print(".", end="", flush=True)
+                    else:
+                        # Print all non-JSON output (phase headers, sample
+                        # features, prompts, countdowns, etc.)
+                        print(line)
 
                 else:
-                    if json_section_done and (time.time() - last_activity > 2):
-                        break
-                    if calibration_complete and (time.time() - last_activity > 5):
-                        break
                     if time.time() - last_activity > IDLE_TIMEOUT:
+                        stats.idle_timeout_triggered = True
                         print("\n  No activity for 5 minutes. Stopping.")
                         break
                     time.sleep(0.05)
 
             except serial.SerialException:
+                stats.disconnect_triggered = True
                 print("\n  micro:bit disconnected.")
                 break
 
     except KeyboardInterrupt:
         print("\n\n  Stopped by user (Ctrl+C).")
 
-    # Close serial
     if ser.is_open:
         ser.close()
 
@@ -314,24 +457,27 @@ def run_capture(data_dir, record_time=9):
 
     with open(log_output, 'w') as f:
         f.write(log_content)
-    print(f"  Log saved to: {log_output}")
+    print(f"  Full log saved.")
 
     # --- Extract and save JSON ---
-    # Try the JSON block first
     json_data = extract_json_from_log(all_lines)
 
-    # If JSON parsing failed (serial corruption), try feature extraction fallback
     if json_data is None:
-        print("  JSON block was corrupted. Using fallback feature extraction...")
+        print("  Data format issue detected. Using backup extraction...")
+        # Count how many sample-like lines exist (for diagnostics)
+        sample_line_count = sum(1 for l in all_lines if "volume=" in l or "Sample" in l)
         samples = extract_features_from_log(all_lines)
         if samples:
+            print(f"  Backup extraction recovered {len(samples)} samples from {sample_line_count} data lines.")
             json_data = {
-                "classes": ["Background Noise", "Confident Speaking", "Hesitant Speaking"],
+                "classes": list(CLASSES_5),
                 "samples": samples,
             }
+        else:
+            print(f"  Backup extraction failed: found {sample_line_count} data lines but could not extract valid samples.")
 
     if json_data:
-        # If calibration data already exists, append the new samples to it!
+        # If calibration data already exists, append the new samples
         if os.path.exists(json_output):
             try:
                 with open(json_output, 'r', encoding='utf-8') as f:
@@ -340,17 +486,22 @@ def run_capture(data_dir, record_time=9):
                     existing_data["samples"].extend(json_data.get("samples", []))
                     json_data = existing_data
             except Exception as e:
-                print(f"  Warning: Could not read existing data to append. Overwriting instead. ({e})")
+                print(f"  Note: Previous data could not be merged. Saving new data only.")
+
+        # Ensure classes list reflects 5-class system
+        json_data["classes"] = list(CLASSES_5)
 
         with open(json_output, 'w', encoding='utf-8') as f:
             json.dump(json_data, f, indent=2)
+            f.flush()
         sample_count = len(json_data.get("samples", []))
-        print(f"  Calibration data saved: {json_output} ({sample_count} total samples)")
+        print(f"  ✅ Voice data saved! ({sample_count} total samples)")
+        stats.report()
         return json_output
-    else:
-        print("  ERROR: Could not extract calibration data from serial output.")
-        print("  Check the log file for details:", log_output)
-        return None
+
+    stats.report()
+    print("\n  [✗] Data extraction failed. The full serial log has been saved for debugging.")
+    return None
 
 
 # ============================================================

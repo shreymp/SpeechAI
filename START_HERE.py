@@ -8,20 +8,22 @@ Run this ONE script to do everything:
   3. Launch the classification server
 
 Usage:
-  python run.py
+  python START_HERE.py
 """
 
 import os
 import sys
 import json
 import logging
-import re
+
+from src.fuzzy_engine import CLASSES_5
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
 # Configure logging
+
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,7 @@ if BASE_DIR not in sys.path:
 
 class ProjectState:
     """Manages the state of calibration and training data."""
-    
+
     @staticmethod
     def _load_json(filepath):
         if not os.path.exists(filepath):
@@ -52,11 +54,17 @@ class ProjectState:
             with open(filepath, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except json.JSONDecodeError:
-            logger.warning(f"  ⚠️ Warning: Corrupted JSON file at {filepath}")
+            logger.warning(f"  [!] Warning: Data file corrupted. Please clear data and restart.")
             return None
         except Exception as e:
-            logger.error(f"  ❌ Error reading {filepath}: {e}")
+            logger.error(f"  [✗] Error: Failed to read saved data. Please check file permissions or clear data.")
             return None
+
+    @staticmethod
+    def _save_json(filepath, data):
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
 
     @classmethod
     def get_calibration_data(cls):
@@ -69,12 +77,32 @@ class ProjectState:
     @classmethod
     def has_sufficient_calibration(cls):
         data = cls.get_calibration_data()
-        return bool(data and len(data.get("samples", [])) >= 9)
+        # 5 classes * 3 samples = 15 minimum samples
+        return bool(data and len(data.get("samples", [])) >= 15)
 
     @classmethod
     def has_trained_model(cls):
         data = cls.get_trained_params()
-        return bool(data and "parameters" in data)
+        # Ensure 'parameters' exists AND is not an empty dictionary
+        return bool(data and data.get("parameters"))
+
+    @classmethod
+    def initialize_empty_files(cls):
+        """Create empty but valid JSON files in the data directory."""
+        os.makedirs(DATA_DIR, exist_ok=True)
+        if not os.path.exists(CALIBRATION_DATA):
+            cls._save_json(CALIBRATION_DATA, {
+                "classes": list(CLASSES_5),
+                "samples": []
+            })
+        if not os.path.exists(TRAINED_PARAMS):
+            cls._save_json(TRAINED_PARAMS, {
+                "trained_at": None,
+                "accuracy": 0.0,
+                "n_classes": 5,
+                "rule_weights": [1.0] * 13,
+                "parameters": {}
+            })
 
 
 # ============================================================
@@ -89,22 +117,25 @@ def prompt_user(msg, default="n"):
             return default == "y"
         return response == 'y'
     except (EOFError, KeyboardInterrupt):
-        print("\n\n  See you later! 👋")
+        print("\n\n  Exiting SpeechAI. Goodbye!")
         sys.exit(0)
 
 
 def print_banner():
-    """Print a nice welcome banner."""
-    banner = """
-╔═══════════════════════════════════════════════════════╗
-║                                                       ║
-║  🎤  AI Voice Mood Detector - Student Edition 🎤      ║
-║                                                       ║
-║   Detects: Background Noise / Confident / Hesitant    ║
-║                                                       ║
-╚═══════════════════════════════════════════════════════╝
-  IMPORTANT: Flash 'FLASH_TO_MICROBIT.py' to your device 
-  ONCE before starting. (Reflashing wipes AI weights!)
+    """Print a standardized welcome banner."""
+    box_width = 64
+    indent = "  "
+    banner = f"""
+{indent}╔{'═' * box_width}╗
+{indent}║{' ' * 64}║
+{indent}║{'🎤  AI Voice Mood Detector — Student Edition 🎤':^64}║
+{indent}║{' ' * 64}║
+{indent}║    Classes: Silence, Confident, Hesitant,{' ' * 23}║
+{indent}║             Anxious, Monotone{' ' * 42}║
+{indent}║{' ' * 64}║
+{indent}╚{'═' * box_width}╝
+  IMPORTANT: Flash 'FLASH_TO_MICROBIT.py' to your device
+  ONCE before starting. (Reflashing will reset AI brain data!)
 """
     print(banner)
 
@@ -113,97 +144,114 @@ def print_menu():
     """Print the main menu with dynamic status."""
     has_cal = ProjectState.has_sufficient_calibration()
     has_brain = ProjectState.has_trained_model()
-    
+
     print("  What would you like to do?")
-    print("\n    [1] Do Everything! (Collect Voice → Teach AI → Start Live Detector)")
-    print("        → Recommended for first-time use.")
-    
+    print("\n    [1] Run Full Pipeline (Capture Data → Train AI → Start Detector)")
+    print("        → Recommended for initial setup.")
+
     print("\n    [2] Add More Voice Samples")
-    print("        → Add more data to make the AI smarter.")
-    
+    print("        → Collect additional data to improve AI accuracy.")
+
     if has_cal:
-        print("\n    [3] Re-teach the AI")
-        print("        → Run the learning math again using your existing data.")
+        print("\n    [3] Retrain AI Brain")
+        print("        → Refresh the AI model using existing voice data.")
     else:
-        print("\n    [3] [Locked] Re-teach the AI")
+        print("\n    [3] [LOCKED] Retrain AI Brain")
         print("        → (Requires Step 1: Voice Data)")
-        
+
     if has_brain:
-        print("\n    [4] Start the Live Detector!")
-        print("        → See the AI guess your mood in real-time.")
+        print("\n    [4] Launch Live Detector")
+        print("        → Run real-time inference on your voice.")
     else:
-        print("\n    [4] [Locked] Start the Live Detector!")
+        print("\n    [4] [LOCKED] Launch Live Detector")
         print("        → (Requires Step 2: Trained AI Brain)")
-    
-    print("\n    [5] Check AI Status")
-    print("    [6] Clear All Data")
-    print("    [7] Mass Data Recording (Custom Time)")
-    print("    [8] Generate Scientific Poster Data")
-    print("    [9] Prepare Micro:bit for Standalone Mode")
-    print("    [q] Quit\n")
+
+    print("\n    [5] Check System Status")
+    print("\n    [6] Clear All Data")
+    print("\n    [7] Mass Data Collection (Custom Duration)")
+    print("\n    [8] Prepare Micro:bit for Standalone Mode")
+    print("\n    [q] Quit\n")
 
 
 def show_status():
     """Print the current status of calibration and training."""
-    print("\n  Current Project Status:")
-    print("  " + "-" * 50)
+    box_width = 64
+    indent = "  "
+    
+    print(f"\n{indent}System Status:")
+    print(f"{indent}{'─' * box_width}")
 
     # Calibration data
     cal_data = ProjectState.get_calibration_data()
-    if cal_data:
-        n_samples = len(cal_data.get("samples", []))
-        print(f"  ✅ Voice Data: We have {n_samples} samples saved.")
+    samples = cal_data.get("samples", []) if cal_data else []
+    n_samples = len(samples)
+
+    if n_samples >= 15:
+        print(f"{indent}[✓] Voice Data: Found {n_samples} samples.")
+    elif n_samples > 0:
+        print(f"{indent}[!] Voice Data: Insufficient data ({n_samples} samples).")
     else:
-        print("  ❌ Voice Data: Not found. We need to record your voice!")
+        print(f"{indent}[✗] Voice Data: No data found. Run Option [1] or [2].")
 
     # Trained params
     train_data = ProjectState.get_trained_params()
-    if train_data and "parameters" in train_data:
+    params = train_data.get("parameters", {}) if train_data else {}
+
+    if params:
         acc = train_data.get("accuracy", "?")
-        trained_at = train_data.get("trained_at", "?")
         if isinstance(acc, (float, int)):
             acc_val = acc * 100
             acc_str = f"{acc_val:.1f}%"
             if acc_val >= 93.0:
-                print(f"  🌟 AI Brain: Trained! It's super smart (Accuracy: {acc_str})")
+                print(f"{indent}[🌟] AI Brain: Trained (Accuracy: {acc_str})")
             else:
-                print(f"  ⚠️ AI Brain: Trained, but it could be smarter (Accuracy: {acc_str}) - Try adding more samples!")
+                print(f"{indent}[!] AI Brain: Trained (Accuracy: {acc_str}). Recommendation: Collect samples.")
         else:
-            print(f"  ✅ AI Brain: Trained!")
+            print(f"{indent}[✓] AI Brain: Trained.")
     else:
-        print("  ❌ AI Brain: The AI hasn't learned from your data yet.")
+        print(f"{indent}[✗] AI Brain: Not ready. Run Option [1] or [3] to train.")
 
-    print("  " + "-" * 50 + "\n")
+    print(f"{indent}{'─' * box_width}\n")
 
 
 def clear_all_data():
-    """Delete all files in the data directory."""
-    print("\n" + "=" * 60)
-    print("  CLEAR ALL DATA 🧹")
-    print("=" * 60 + "\n")
-    print("  ⚠️ WARNING: This will delete ALL your recorded voice samples")
-    print("     and your AI's trained brain. You will have to start completely")
-    print("     from scratch.")
-    
-    if not prompt_user("  Are you ABSOLUTELY sure you want to delete everything?", default="n"):
-        print("  Phew! Your data is safe. Cancelled.")
+    """Delete all files in the data directory and re-initialize empty data files."""
+    box_width = 64
+    indent = "  "
+    print(f"\n{indent}╔{'═' * box_width}╗")
+    print(f"{indent}║{'CLEAR ALL DATA 🧹':^64}║")
+    print(f"{indent}╚{'═' * box_width}╝\n")
+    print(f"{indent}[!] WARNING: This will permanently delete all voice samples")
+    print(f"{indent}    and the trained AI brain. This action cannot be undone.")
+
+    if not prompt_user("  Are you sure you want to delete all data?", default="n"):
+        print("  Operation cancelled. Data is safe.")
         return
-        
+
     deleted_anything = False
-    for filename in ["calibration_data.json", "calibration_log.txt", "trained_params.json", "validation_report.txt"]:
+    data_files = [
+        "calibration_data.json", "calibration_log.txt", "noise_calibration.json",
+        "trained_params.json", "validation_report.txt", "session_log.csv",
+        "scientific_poster_data.txt"
+    ]
+    for filename in data_files:
         filepath = os.path.join(DATA_DIR, filename)
         if os.path.exists(filepath):
             try:
                 os.remove(filepath)
-                print(f"  🗑️ Deleted {filename}")
+                print(f"  [✓] Deleted: {filename}")
                 deleted_anything = True
             except Exception as e:
-                print(f"  ❌ Error deleting {filename}: {e}")
-                
+                print(f"  [✗] Error deleting {filename}: {e}")
+
     if deleted_anything:
-        print("\n  ✅ All data cleared! You are starting fresh. Rerun START_HERE.py!")
+        print("\n  [✓] All data cleared successfully.")
     else:
-        print("\n  🤷 No data found to delete! You were already starting fresh.")
+        print("\n  [i] No data files were found to delete.")
+
+    # Re-initialize empty files so the project never operates without valid state
+    ProjectState.initialize_empty_files()
+    print("  [✓] Empty data files initialized. Ready to record new samples.")
 
 
 # ============================================================
@@ -212,23 +260,25 @@ def clear_all_data():
 
 def step_mass_record_data():
     """Run the calibration capture process with a custom duration."""
-    print("\n" + "=" * 60)
-    print("  MASS DATA RECORDING 🎙️")
-    print("=" * 60 + "\n")
-    print("  This allows you to record a large volume of real voice data at once.")
-    print("  You will input the number of seconds you want to record per category.")
-    print("  (e.g., 60 seconds = 20 samples per category)")
+    box_width = 64
+    indent = "  "
+    print(f"\n{indent}╔{'═' * box_width}╗")
+    print(f"{indent}║{'MASS DATA RECORDING 🎙️':^64}║")
+    print(f"{indent}╚{'═' * box_width}╝\n")
+    print("  This feature allows for high-volume voice data collection.")
+    print("  Specify the duration (seconds) per category to be recorded.")
+    print("  Example: 60 seconds ≈ 20 samples per category.")
     print()
-    print("  Before we start listening, make sure:")
-    print("    1. Your micro:bit is plugged into this computer via USB.\n")
+    print("  Requirements:")
+    print("    1. Micro:bit must be connected via USB.\n")
 
     try:
         time_str = input("  How many seconds per category do you want to record? [default: 30]: ").strip()
         time_sec = int(time_str) if time_str else 30
     except ValueError:
-        print("  Invalid number. Defaulting to 30 seconds.")
+        print("  [!] Invalid input. Defaulting to 30 seconds.")
         time_sec = 30
-        
+
     if time_sec < 3:
         time_sec = 3
 
@@ -238,57 +288,71 @@ def step_mass_record_data():
 
     from src.capture import run_capture
     result = run_capture(DATA_DIR, record_time=time_sec)
-    
+
     if result:
-        print(f"\n  ✅ Awesome! Your mass data was saved to: {result}")
+        print(f"\n  [✓] Data collection complete. File saved: {result}")
         return True
-    
-    print("\n  ❌ Oops, we couldn't collect your voice. Let's try again.")
+
+    print("\n  [✗] Error: Data collection failed. Please check your connection.")
     return False
 
 
 def step_calibrate():
     """Run the calibration capture process."""
-    print("\n" + "=" * 60)
-    print("  STEP 1: COLLECTING VOICE DATA 🎙️")
-    print("=" * 60 + "\n")
+    box_width = 64
+    indent = "  "
+    print(f"\n{indent}╔{'═' * box_width}╗")
+    print(f"{indent}║{'STEP 1: COLLECTING VOICE DATA 🎙️':^64}║")
+    print(f"{indent}╚{'═' * box_width}╝\n")
     print("  Before we start listening, make sure:")
     print("    1. Your micro:bit is plugged into this computer via USB.")
-    print("    2. Close any other code windows or Serial tools.\n")
+    print("    2. Close any other code windows or Serial tools.")
+    print("    3. You will need to press Button A on the micro:bit to start recording each mood.\n")
 
-    if not prompt_user("  Ready to start recording?", default="y"):
+    if not prompt_user("  Ready to start recording? (Press Button A on the device when prompted)", default="y"):
         print("  Okay, skipping voice collection for now.")
         return False
 
     # Lazy import to avoid loading heavy dependencies immediately
     from src.capture import run_capture
 
-    result = run_capture(DATA_DIR)
+    result = run_capture(DATA_DIR, record_time=15) # 15s for 5 classes
     if result:
-        print(f"\n  ✅ Awesome! Your voice data was saved to: {result}")
+        print(f"\n  [✓] Data collection complete. File saved: {result}")
         return True
-    
-    print("\n  ❌ Oops, we couldn't collect your voice. Let's try again.")
+
+    print("\n  [✗] Error: Failed to extract voice data. Please try recording again.")
     return False
 
 
-def step_train():
+def step_train(_retry_depth=0):
     """Run the training pipeline."""
-    print("\n" + "=" * 60)
-    print("  STEP 2: TEACHING THE AI 🧠")
-    print("=" * 60)
+    box_width = 64
+    indent = "  "
+    print(f"\n{indent}╔{'═' * box_width}╗")
+    print(f"{indent}║{'STEP 2: TEACHING THE AI 🧠':^64}║")
+    print(f"{indent}╚{'═' * box_width}╝\n")
 
-    if not ProjectState.has_sufficient_calibration():
-        print("\n  ❌ We don't have enough voice samples yet. Let's do Step 1 first!")
+    # Verify calibration data exists and has sufficient samples
+    cal_data = ProjectState.get_calibration_data()
+    if not cal_data:
+        print(f"\n  [✗] Error: No voice data found. Please complete Step 1 first.")
         return False
+
+    samples = cal_data.get("samples", [])
+    if len(samples) < 15:
+        print(f"\n  [✗] Error: Insufficient voice data ({len(samples)} samples, need ≥15).")
+        return False
+
+    print(f"  Found {len(samples)} voice samples across {len(CLASSES_5)} classes.")
 
     from src.trainer import run_training
 
-    print("\n  The AI is crunching the numbers... Please wait a moment.")
+    print("\n  Training AI Brain in progress... Please wait.")
     result = run_training(CALIBRATION_DATA, DATA_DIR)
     if result:
-        print(f"\n  ✅ Success! The AI has finished learning from your voice.")
-        
+        print(f"\n  [✓] AI training complete.")
+
         # Check accuracy to guide students
         train_data = ProjectState.get_trained_params()
         if train_data and "accuracy" in train_data:
@@ -296,48 +360,49 @@ def step_train():
             if isinstance(acc, (int, float)):
                 acc_val = acc * 100
                 if acc_val < 93.0:
-                    print(f"\n  ⚠️  Hmm, the AI's accuracy is only {acc_val:.1f}%.")
-                    print("      That's a bit low! (We want at least 93.0% for the best results)")
-                    print("      The AI might get confused between your moods.")
-                    print("\n  💡  PRO TIP: You can make it much smarter by giving it more voice samples!")
-                    
-                    if prompt_user("  Would you like to record more samples right now to fix this?", default="y"):
-                        print("\n  Great idea! Let's get some more samples...")
-                        if step_calibrate():
-                            # Re-run training with the new data
-                            return step_train()
-                        else:
-                            return False
+                    print(f"\n  [!] AI accuracy is {acc_val:.1f}% (target: ≥93.0%).")
+                    print("      More voice samples usually improve accuracy.")
+
+                    if _retry_depth >= 2:
+                        print("      Maximum retries reached. You can add more samples")
+                        print("      later using Option [2] or Option [7].")
+                    else:
+                        print()
+                        if prompt_user("  Record additional samples now to improve accuracy?", default="y"):
+                            print("\n  Initiating additional collection...")
+                            if step_calibrate():
+                                return step_train(_retry_depth=_retry_depth + 1)
+                            print("  Additional collection did not complete. Proceeding with current model.\n")
                 else:
-                    print(f"\n  🌟  Wow! The AI's accuracy is {acc_val:.1f}%. That is excellent!")
-                    
+                    print(f"\n  [🌟] High Accuracy achieved: {acc_val:.1f}%. Excellent!")
+
         return True
-    
-    print("\n  ❌ Oh no, the AI failed to learn. Let's try again.")
+
+    print("\n  [✗] Error: AI training failed.")
+    print("      Check that calibration_data.json is valid and has complete feature data.")
     return False
-
-
-
 
 
 def step_serve():
     """Start the classification server."""
-    print("\n" + "=" * 60)
-    print("  STEP 3: LIVE MOOD DETECTION ✨")
-    print("=" * 60 + "\n")
+    box_width = 64
+    indent = "  "
+    print(f"\n{indent}╔{'═' * box_width}╗")
+    print(f"{indent}║{'STEP 3: LIVE MOOD DETECTION ✨':^64}║")
+    print(f"{indent}╚{'═' * box_width}╝\n")
     print("  Before we start the magic, make sure:")
     print("    1. Your micro:bit is plugged into this computer via USB.\n")
 
     if not ProjectState.has_trained_model():
-        print("  ⚠️  The AI hasn't been taught your voice yet — it's going to guess using generic settings.")
-        print("      (It might not be very accurate!)\n")
+        print("  [!] Warning: AI Brain not trained. System will use generic settings.")
+        print("      Accuracy may be significantly reduced.\n")
 
-    if not prompt_user("  Ready to launch the Live Display?", default="y"):
-        print("  Okay, we'll wait.")
+    if not prompt_user("  Launch the Live Detector display?", default="y"):
+        print("  Action deferred.")
         return
 
     from src.server import run_server
-    print("\n  🚀 Starting the Live Display! Talk into the micro:bit to see it work...")
+    print("\n  [🚀] Launching Live Detector... Speak into the Micro:bit to observe results.")
     run_server(TRAINED_PARAMS)
 
 
@@ -351,207 +416,65 @@ def run_full_pipeline():
     needs_training = not ProjectState.has_trained_model()
 
     if needs_calibration:
-        print("\n  📋 You don't have enough voice data yet. Let's collect some!")
+        print("\n  [i] Insufficient voice data detected. Starting collection...")
         if not step_calibrate():
-            print("\n  We can't move forward without voice data. See you next time!")
             return
         needs_training = True
 
     elif needs_training:
-        print("\n  📋 Great! You have voice data, but the AI hasn't learned it yet.")
+        print("\n  [i] Voice data found. AI model requires training.")
     else:
-        print("\n  ✅ Good news: Your AI is already trained and ready to go!")
+        print("\n  [✓] System Ready: AI model is already trained.")
         show_status()
-        if not prompt_user("  Would you like to skip straight to the Live Display?", default="y"):
+        if not prompt_user("  Proceed directly to Live Detector?", default="y"):
             if prompt_user("  Would you like to record new voice samples instead?", default="n"):
                 if step_calibrate():
                     needs_training = True
                 else:
                     return
-            else:
-                needs_training = True  # We will just re-train
 
     if needs_training:
         if not step_train():
-            print("\n  We can't move forward without a smart AI. See you next time!")
+            print("\n  [✗] Pipeline halted: Training failed. Exiting.")
             return
 
-    print("\n  ✅ Everything is perfectly set up!\n")
-    
-    if prompt_user("  Start the Live Mood Detection?", default="y"):
+    print("\n  [✓] Pipeline complete. System is ready.\n")
+
+    if prompt_user("  Launch Live Detector now?", default="y"):
         step_serve()
 
 
-def step_generate_poster_data():
-    """Compiles all important information for a scientific poster."""
-    print("\n" + "=" * 60)
-    print("  SCIENTIFIC POSTER DATA COMPILATION 📊")
-    print("=" * 60 + "\n")
-    
-    cal_data = ProjectState.get_calibration_data()
-    train_data = ProjectState.get_trained_params()
-    
-    if not cal_data and not train_data:
-        print("  ❌ No data available to compile. Please collect data and train the AI first.")
-        return
-        
-    poster_lines = []
-    poster_lines.append("=" * 50)
-    poster_lines.append("    AI VOICE MOOD DETECTOR - SCIENTIFIC DATA")
-    poster_lines.append("=" * 50 + "\n")
-    
-    if cal_data:
-        classes = cal_data.get("classes", [])
-        samples = cal_data.get("samples", [])
-        poster_lines.append("1. DATASET OVERVIEW")
-        poster_lines.append("-" * 20)
-        poster_lines.append(f"Total Samples Collected: {len(samples)}")
-        poster_lines.append(f"Classes: {', '.join(classes)}\n")
-        
-        # Calculate samples per class
-        class_counts = {c: 0 for c in range(len(classes))}
-        
-        # Calculate average features per class
-        features = ["avg_level", "speech_ratio", "num_gaps", "variance"]
-        class_features = {c: {f: [] for f in features} for c in range(len(classes))}
-        
-        for s in samples:
-            c = s.get("class", 0)
-            class_counts[c] = class_counts.get(c, 0) + 1
-            for f in features:
-                if f in s:
-                    class_features[c][f].append(s[f])
-                    
-        for i, c_name in enumerate(classes):
-            poster_lines.append(f"Class: {c_name} ({class_counts.get(i, 0)} samples)")
-            if class_counts.get(i, 0) > 0:
-                for f in features:
-                    vals = class_features[i][f]
-                    avg = sum(vals) / len(vals) if vals else 0
-                    poster_lines.append(f"  - Avg {f}: {avg:.2f}")
-            poster_lines.append("")
-            
-    if train_data:
-        poster_lines.append("2. AI MODEL PERFORMANCE")
-        poster_lines.append("-" * 20)
-        trained_at = train_data.get("trained_at", "Unknown")
-        acc = train_data.get("accuracy", 0)
-        
-        poster_lines.append(f"Last Trained: {trained_at}")
-        if isinstance(acc, (int, float)):
-            poster_lines.append(f"Model Accuracy: {acc * 100:.2f}%")
-        else:
-            poster_lines.append(f"Model Accuracy: {acc}")
-        poster_lines.append("")
-        
-        poster_lines.append("3. FUZZY LOGIC PARAMETERS (MEMBERSHIP FUNCTIONS)")
-        poster_lines.append("-" * 20)
-        params = train_data.get("parameters", {})
-        for param_name, values in params.items():
-            if isinstance(values, list) and len(values) == 3:
-                poster_lines.append(f"{param_name}: Min={values[0]:.2f}, Peak={values[1]:.2f}, Max={values[2]:.2f}")
-            else:
-                poster_lines.append(f"{param_name}: {values}")
-        poster_lines.append("")
-        
-    poster_text = "\n".join(poster_lines)
-    print(poster_text)
-    
-    # Save to file
-    out_file = os.path.join(DATA_DIR, "scientific_poster_data.txt")
-    try:
-        with open(out_file, "w") as f:
-            f.write(poster_text)
-        print(f"\n  ✅ Successfully saved this data to: {out_file}")
-    except Exception as e:
-        print(f"\n  ❌ Failed to save to file: {e}")
 
 
 def step_prepare_standalone():
     """Prepare the micro:bit for standalone mode by pushing weights."""
-    print("\n" + "=" * 60)
-    print("  PREPARE MICRO:BIT FOR STANDALONE MODE 🚀")
-    print("=" * 60 + "\n")
-    
+    from src.trainer import push_params_to_microbit
+    box_width = 64
+    indent = "  "
+    print(f"\n{indent}╔{'═' * box_width}╗")
+    print(f"{indent}║{'PREPARE MICRO:BIT FOR STANDALONE MODE 🚀':^64}║")
+    print(f"{indent}╚{'═' * box_width}╝\n")
+
     if not ProjectState.has_sufficient_calibration():
-        print("  ❌ Adequate samples are not present. Please record voice data first (Step 1).")
+        print(f"{indent}[✗] Error: Insufficient voice data. Please complete Step 1.")
         return False
-        
+
     train_data = ProjectState.get_trained_params()
     if not train_data or "parameters" not in train_data:
-        print("  ❌ AI Brain not found. Please train the AI first (Step 2).")
+        print(f"{indent}[✗] Error: AI brain not found. Please complete Step 2.")
         return False
-        
+
     print("  Make sure:")
     print("    1. Your micro:bit is plugged into this computer via USB.\n")
-    
+
     if not prompt_user("  Ready to push the most recent weights to the micro:bit?", default="y"):
         print("  Okay, cancelled.")
         return False
 
-    import time
-    try:
-        import serial
-        import serial.tools.list_ports
-    except ImportError:
-        print("  ❌ 'pyserial' is not installed. Run 'pip install pyserial'.")
-        return False
-
-    def get_microbit_port():
-        ports = list(serial.tools.list_ports.comports())
-        for p in ports:
-            # Check VID/PID (0x0D28:0x0204 is the standard micro:bit identifier)
-            if p.vid == 0x0D28 and p.pid == 0x0204:
-                return p.device
-            # Check description for common micro:bit/mbed strings
-            desc = p.description.lower()
-            if "micro:bit" in desc or "mbed" in desc:
-                return p.device
-            # Check device name (Mac /dev/cu.usbmodemXXXX)
-            if "usbmodem" in p.device.lower():
-                return p.device
-        return None
-
-    port = get_microbit_port()
-    if not port:
-        print("  ❌ micro:bit not found. Make sure it is plugged in.")
-        return False
-
     trained_params = train_data["parameters"]
-    best_r6 = train_data.get("r6_weight", 0.6)
+    rule_weights = train_data.get("rule_weights", [1.0]*13)
 
-    try:
-        print("  Sending trained parameters to micro:bit...")
-        ser = serial.Serial(port, 115200, timeout=0.1)
-        time.sleep(2)
-        parts = [str(best_r6)]
-        keys = [
-            "LEVEL_LOW", "LEVEL_MED", "LEVEL_HIGH",
-            "RATIO_LOW", "RATIO_MED", "RATIO_HIGH",
-            "GAPS_FEW", "GAPS_SOME", "GAPS_MANY",
-            "VAR_LOW", "VAR_MED", "VAR_HIGH"
-        ]
-        for k in keys:
-            if k in trained_params:
-                a, b, c = trained_params[k]
-                parts.extend([str(a), str(b), str(c)])
-            else:
-                print(f"  ❌ Missing parameter '{k}' in weights.")
-                ser.close()
-                return False
-
-        param_str = ",".join(parts)
-        msg = f"CMD_SAVE_PARAMS:{param_str}\n"
-        for i in range(0, len(msg), 32):
-            ser.write(msg[i:i+32].encode('utf-8'))
-            ser.flush()
-            time.sleep(0.05)
-        ser.close()
-        print("  ✅ micro:bit updated! Standalone mode ready.")
-        return True
-    except Exception as e:
-        print(f"  ⚠️ Could not send params to micro:bit: {e}")
-        return False
+    push_params_to_microbit(trained_params, rule_weights)
 
 
 # ============================================================
@@ -560,57 +483,78 @@ def step_prepare_standalone():
 
 def main():
     os.makedirs(DATA_DIR, exist_ok=True)
+    ProjectState.initialize_empty_files()
     print_banner()
     show_status()
     print_menu()
 
     try:
         while True:
-            choice = input("  Enter your choice [1-9, or q to quit]: ").strip().lower()
+            choice = input("  Enter your choice [1-8, or q to quit]: ").strip().lower()
 
             if choice == '1':
                 run_full_pipeline()
-                break
+                print("\n  Pipeline action completed. Returning to menu.\n")
+                show_status()
+                print_menu()
+
             elif choice == '2':
                 if step_calibrate():
-                    step_train()
-                break
+                    if not step_train():
+                        print("  [i] Training was not completed. Check diagnostics above.\n")
+                else:
+                    print("  [i] Data collection did not complete.\n")
+                show_status()
+                print_menu()
+
             elif choice == '3':
                 if ProjectState.has_sufficient_calibration():
                     step_train()
-                    break
                 else:
-                    print("  ⚠️  You need to record voice data (Step 1) before you can teach the AI!\n")
+                    print("  [!] Warning: Insufficient voice data. Run Option [1] or [2] first.\n")
+                show_status()
+                print_menu()
+
             elif choice == '4':
                 if ProjectState.has_trained_model():
                     step_serve()
-                    break
                 else:
-                    print("  ⚠️  The AI hasn't learned your voice yet (Step 2). Run Option 1 or 3 first!\n")
+                    print("  [!] Warning: AI brain not trained. Run Option [1] or [3] first.\n")
+                show_status()
+                print_menu()
+
             elif choice == '5':
                 show_status()
                 print_menu()
+
             elif choice == '6':
                 clear_all_data()
-                break
+                show_status()
+                print_menu()
+
             elif choice == '7':
                 if step_mass_record_data():
-                    step_train()
-                break
+                    if not step_train():
+                        print("  [i] Training was not completed. Check diagnostics above.\n")
+                else:
+                    print("  [i] Mass data collection did not complete.\n")
+                show_status()
+                print_menu()
+
             elif choice == '8':
-                step_generate_poster_data()
-                break
-            elif choice == '9':
                 step_prepare_standalone()
-                break
+                show_status()
+                print_menu()
+
             elif choice == 'q':
-                print("  See you later! 👋")
+                print("  Exiting SpeechAI system. Goodbye!")
                 break
+
             else:
-                print("  Hmm, that wasn't a valid choice. Try typing 1, 2, 3, 4, 5, 6, 7, 8, 9, or q.\n")
-                
+                print("  [!] Invalid choice. Please enter 1-8 or q.\n")
+
     except (EOFError, KeyboardInterrupt):
-        print("\n\n  See you later! 👋")
+        print("\n\n  Exiting SpeechAI system. Goodbye!")
         sys.exit(0)
 
 

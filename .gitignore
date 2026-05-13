@@ -6,14 +6,23 @@
 venv/
 ENV/
 Action Plan/
+Audit Information/
 .DS_Store
 
 # Python cache
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 
 # Distribution / packaging
 dist/
 build/
 *.egg-info/
+
+# Data / Logs
+data/
+logs/
+ENGINEERING_DOC.md
+poster_template.md
+reference/
