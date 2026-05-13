@@ -1,0 +1,95 @@
+Calibration Log — 2026-05-13 10:33:36
+============================================================
+
+
+Starting Calibration...
+
+=== Phase 1: Silence ===
+  --> Press Button A to start continuous 15s recording...
+    3...
+    2...
+    1...
+   [Recording continuously for 15 seconds]
+    Sample 1/5:volume=3.0  speech=0.01  pauses=1  energy=402  melody=9.4  tren=-0.062  reaction=20ms
+    Sample 2/5: volume=2.1  spech=0.00  pauses=0  energy=21  melody=7.1  trend=-0.012  reaction=2980ms
+    Sample 3/5: volume=1.5  speech=0.00  pauses=0  enrgy=11  melody=4.9  trend=-0.004  reaction=3000ms
+    Sample 4/5: volume=1.5  speech=0.00  pauses=0  energy=15  melody=5.0  trend=-0.007  reaction=3000ms
+    Sample 5/5: volume=1.6  speech=0.00  pauses=0  enery=21  melody=5.7  trend=-0.007  reaction=2980ms
+
+=== Pase 2: Confident ===
+  --> Press Button A to start continuous 15s ecording...
+    3...
+    2...
+    1...
+    [Recording continuously for 15 seconds]
+    Sample 1/5: volume=1.2  speech=0.0  pauses=0  energy=17  melody=4.3  trend=0.004  reaction=2980ms
+    ample 2/5: volume=1.5  speech=0.00  pauses=0  energy=12 melody=5.4  trend=0.008  reaction=2980ms
+    Sample 3/5: volume=1.5  speech=0.00  pauses=0 energy=19  melody=6.1  trend=0.009  reaction=3000ms
+    Sample 4/5: volume=1.1  spech=0.00  pauses=0  energy=13  melody=4.3  trend=-0.003  reacton=2980ms
+    Sample 5/5: volume=1.6  speech=0.00  pauses=0  energy=23  melody=5.2  trend=0.014  reaction=3000ms
+
+=== Phase 3: Hesitant ==
+  --> Press Button A t start continuous 15s recording...
+    3...
+    2...
+    1...
+    [Recordig continuously for 15 seconds]
+    Sample 1/5: volume=0.8  spech=0.00  pauses=0  energy=10  melody=3.0  trend=-0.002  reaction=000ms
+    Sample 2/5: volume=.2  speech=0.00  pauses=0  energy=11  melody=4.4  trend=-.002  reaction=3000ms
+    Sample 3/5: vlume=1.2  speech=0.00  pauses=0  energy=12  melody=4.0 trend=-0.004  reaction=000ms
+    Sample 4/5: volume=1.9  speech=0.00  pauses=0  energy=19  melody=5.6  tred=0.002  reaction=3000ms
+    Sample 5/5: volume=1.1  seech=0.00  pauses=0  energy=13  melody=3.5  trend=0.014  reaction=3000ms
+
+=== Pase 4: Anxious ===
+  --> Press Button A to start continuous 5s recording...
+    3...
+   2...
+    1..
+    [Recording continuously for 15 seconds]
+    Sample 1/5: volume=1.4  speech=0.00  pauses=0 energy=17  melody=5.2  trend=0.004  reaction=3000ms
+    Sample 2/5:volume=1.2  speech=0.00  pauses=0  energy=13  melody=4.3  trend=-0.009  reaction=2980ms
+    Sample 3/5: volume=1.4  speech=0.00  pauses=0  energy=23  melody=5.3  trend0.011  reaction=3000ms
+    Sample 4/5: volume=1.3  speech=0.00  pauses=0  energy=15 melody=4.6  trend=-0.009  reaction=3000ms
+    Sampe 5/5: volume=1.3  speech=0.0  pauses=0  energy=14  melody=3.7  trend=-0.007  reaction=2980ms
+
+=== Phase 5: Monotne ===
+  --> Press Button A tostart continuous 15s recording...
+    3...
+    2...
+    1...
+    [Recording continuousy for 15 seconds]
+    Sample 1/5 volume=1.1  speech=0.00  pauses=0  energy=10  melody=3.6  trend=0.012  reaction=3000ms
+    Sample 2/5: volume=2.0  speech=0.00 pauses=0  energy=27  melody=6.0  trend=0.008  reaction=3000ms
+    Sample 3/5: volume=1.0  speech=.00  pauses=0  energy=9  melody=3.7  trend=-0.009  reaction=2980ms
+   Sample 4/5: volume=1.7  speech=0.00  pauses=0  energy=23  melody=6.6  trend=0.011  reaction=2980ms
+    Sample 5/5: volume=0.8  speech=0.0  pauses=0  energy=7  melody=2.9  trend=-0.010  reaction=3000ms
+
+--- JSON DATA ---
+"classes": ["Ambient Silence", "Confident Articulation", "Hesitat Disfluency", "Anxious Urgency", "Disengged Monotone"],
+ "samples": [
+  {"class": 0, "avg_leve": 2.986577, "speech_ratio": 0.0671141, "num_gaps": 1, "variance": 401.7704, "prosody_curvature": 9.35742, "intensity_drift: -0.06154907, "respone_latency": 20, "speech_rate_variability": 0.8035407, "pase_duration_entropy": 0.1},  {"class": 0, "avg_level": 2.073826, "speech_ratio": 0.0, "num_gaps": 0, variance": 21.38383, "prosody_curvature: 7.068027, "intensity_drift": -0.01209868, "respnse_latency": 2980, "speech_rate_variability": 0.04276767, "pause_duration_entropy": 0.0},
+  {"class": 0, "avg_level": 1.48, "speeh_ratio": 0.0, "num_gaps": 0, "variance": 11.32962, "prosody_curvature": 4.864865, "intensity_drift": -0.003857949, "response_latecy": 3000, "speech_rate_variability": 0.0265924, "pause_duration_entropy": 0.0},
+  {"class": 0, "avg_lvel": 1.473333, "speech_ratio": 0.0,"num_gaps": 0, "variance": 15.36926, "prosdy_curvature": 4.97293, "intensity_drift": -0.00746109, "response_latency": 3000, "speech_rat_variability": 0.0307852, "pause_duration_entropy": 0.0},
+  {"class": 0, "avg_level": 1.550336 "speech_ratio": 0.0, "um_gaps": 0, "variance": 21.46896, "prosody_curvature: 5.727891, "intensity_drift": -0.006994376, "response_latency": 2980, "speech_rae_variability": 0.04293793, "pause_duration_entropy": 0.0},
+  {"class": 1, "avg_level": 1.20804, "speech_ratio": 0.0, "num_gaps": 0, "variance": 16.92987, "prosody_curvature": 4.285714, intensity_drift": 0.004346091, "response_atency": 2980, "speechrate_variability": 0.03385973, "pause_duration_entopy": 0.0},
+  {"clas": 1, "avg_level": 1.496644 "speech_ratio": 0.0, "num_gaps": 0, "variance": 12.33055, "prosody_curvature": 5.448979, "intensity_rift": 0.00798839, "response_latency": 290, "speech_rate_variability": 0.02466109, "pause_duratin_entropy": 0.0},
+  {"clas": 1, "avg_level": 1.533333, "speech_ratio": 0.0, "num_gaps": 0, "vaiance": 18.70221, "prosody_curvature": 6.05454, "intensity_drift":0.008846614, "respone_latency": 3000, "speech_rate_variabilit": 0.03740442, "pause_duration_entroy": 0.0},
+  {"class": 1, "avg_level": 1.134228, "speech_ratio": 0., "num_gaps": 0, "varance": 13.16321, "prosody_curvature": 4.32653, "intensity_drift": -0.002815165 "response_latency": 2980, "speech_rate_variability": 0.02632642, "pause_durationentropy": 0.0},
+  {"class": 1, "avglevel": 1.58, "speech_raio": 0.0, "num_gaps": 0 "variance": 22.55026, "prosody_curvature": 5.216216, "intensity_drift": 0.1442731, "response_latency": 3000, "speech_rate_variability": 0.04510051, "pause_duration_entroy": 0.0},
+  {"clas": 2, "avg_level": 0.8133333, "speech_ratio": 0.0, "num_gaps: 0, "variance": 9.925148, "prosody_curvature": 2.993243 "intensity_drift": -0.001532513, "response_latecy": 3000, "speech_rae_variability": 0.0198503, "pause_duration_entropy": 0.0},
+  {"class": 2, "avg_level":1.193333, "speech_ratio": 0.0, "num_gap": 0, "variance": 10.67597, "prosody_urvature": 4.398649, "intensity_drift": -.001889862, "respons_latency": 3000, "speech_rate_variabilty": 0.02135194, "pause_duraion_entropy": 0.0},
+  {"class": 2, "avg_level": 1.20666, "speech_ratio": 0.0,"num_gaps": 0, "varince": 11.52396, "prosdy_curvature": 3.972973, "intensity_drift": -0.004112184, response_latency": 300, "speech_rate_varibility": 0.02304793, "pause_duration_entropy": 0.0},
+  {"class" 2, "avg_level": 1.853333, "speech_ratio": 0.0, "num_gaps": , "variance": 18.9784, "prosody_curvature" 5.628378, "intensity_drift": 0.002311215, "response_latency": 3000, speech_rate_variability": 0.03795695, "pause_duration_entropy" 0.0},
+  {"class": 2, "avg_leel": 1.1, "speech_ratio": 0.0 "num_gaps": 0, "variance: 12.94332, "prosody_curvature": 3.486486,"intensity_drift": 001373394, "response_latency": 3000,"speech_rate_variability": 0.02588665, "pause_duration_entropy": 0.0},
+  {"class": 3, "avglevel": 1.393333, "speech_ratio": 0.0, "num_gaps" 0, "variance": 17.1864, "prosody_curvatre": 5.216216, "intensity_drift": 0.003582381, "response_atency": 3000, "speech_ate_variability": 0.03431729, "pause_duration_entropy": 0.0}
+  {"class": 3, "avg_level": 1.221477, "speech_ratio: 0.0, "num_gaps": 0, "variance": 12.58856, "prosody_curvature": 4.346939, "intensity_drift": -0.009486667, "esponse_latency": 298, "speech_rate_variability": 0.02517712, "pause_duration_entropy": 0.0},
+  {"class": 3, avg_level": 1.426667, "speech_ratio": 0.0, "num_aps": 0, "variance": 22.5913, "prosody_curvature": 5.337838, "intensity_drift": 0.01108316,"response_latency": 300, "speech_rate_variability": 0.0451826, "pause_duraion_entropy": 0.0},
+  {"class": 3, "avg_level": 1.36667, "speech_ratio": 0.0, "num_aps": 0, "variance": 15.35327, "prosody_curvature": 4.574324, "intensity_drift": -0.009395975, "response_latency": 3000, "speech_rate_variability": 0.0070654, "pause_duration_entropy": 0.0},
+  {"class": 3, "avg_level: 1.281879, "speech_ratio":0.0, "num_gaps": 0, variance": 13.93395, "prosody_curvature": 3.714286, "intensity_drift": -0.007280972, "response_latency": 2980, "speec_rate_variability": 0.02786789, "pause_duration_entropy": 0.0},
+  {"class": 4, "avg_level": 1.133333, "speech_ratio": 0.0, "num_gaps": 0, "variance": 10.40888, "prosody_curvatur": 3.628378, "intensity_drift": 0.01214276, "response_ltency": 3000, "speech_ate_variability": 0.02081776, "pause_duration_entroy": 0.0},
+  {"clas": 4, "avg_level": 1.966667, "speech_ratio": 0.0, "num_gaps": 0, "variance" 26.91218, "prosodycurvature": 5.959459, "intensity_drift": 0.00828659, "response_latency": 3000, "speech_rate_variability": 0.05382437, "paue_duration_entropy": 0.0},
+  {"clas": 4, "avg_level": 0.959731, "speech_ratio":0.0, "num_gaps": 0 "variance": 8.857454, "prosody_curvature": 3.70068, "intensity_drift": -0.009439505, "response_latency": 2980, "speech_rate_variability": 0.01771491, "pause_duratin_entropy": 0.0},
+  {"class": 4, "avg_level": 1.718121, "speech_ratio": 0.0, "num_aps": 0, "variance": 22.7259, "prosody_curvature": 6.557823, "intensity_drift": 0.01144567, "response_latency": 2980, speech_rate_variability": 0.04545179, "pause_uration_entropy": 0.0},
+  {"class": 4, "av_level": 0.8133333, "speech_ratio" 0.0, "num_gaps": 0, "variance": 7.165143, "prosody_cuvature": 2.925676, "intensity_drift": -0.009731985, "response_latency": 3000, "peech_rate_variability": 0.01433029, "pause_duration_entropy": 0.0}
+ ]}
+ALIBRATION COMPLETE

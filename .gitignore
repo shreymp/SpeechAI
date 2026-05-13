@@ -21,7 +21,6 @@ build/
 *.egg-info/
 
 # Data / Logs
-data/
 logs/
 ENGINEERING_DOC.md
 poster_template.md

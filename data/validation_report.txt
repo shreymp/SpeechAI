@@ -1,0 +1,44 @@
+FUZZY LOGIC VOICE CLASSIFIER — 5-CLASS VALIDATION REPORT
+Generated: 2026-05-13T10:33:37.543426
+============================================================
+
+Test samples: 15
+Overall Accuracy: 13.3% (2/15)
+
+Confusion Matrix:
+                        Ambient   Confiden  Hesitant  Anxious   Disengag
+Actual Ambient Silence          1         0         2         0         0
+Actual Confident Articu         2         0         1         0         0
+Actual Hesitant Disflue         3         0         0         0         0
+Actual Anxious Urgency          2         0         1         0         0
+Actual Disengaged Monot         1         0         0         1         1
+
+============================================================
+Trained Parameters:
+
+  CURV_HIGH       = (0, 6, 50)
+  CURV_LOW        = (0, 6, 14)
+  CURV_MED        = (0, 6, 14)
+  DRIFT_NEG       = (-2.0, -0.01, 0.06)
+  DRIFT_POS       = (-0.08, 0.01, 2.0)
+  DRIFT_ZERO      = (-0.1, -0.0, 0.1)
+  GAPS_FEW        = (0, 1, 14)
+  GAPS_MANY       = (0, 0, 25)
+  GAPS_SOME       = (0, 1, 9)
+  LATENCY_HIGH    = (0, 2014, 4500)
+  LATENCY_LOW     = (0, 2214, 3180)
+  LATENCY_MED     = (0, 1854, 3080)
+  LEVEL_HIGH      = (0, 2, 255)
+  LEVEL_LOW       = (0, 5, 32)
+  LEVEL_MED       = (0, 2, 10)
+  PDE_HIGH        = (0, 0.03, 2.0)
+  PDE_LOW         = (0, 0.14, 0.95)
+  PDE_MED         = (0, 0.07, 0.45)
+  RATIO_HIGH      = (0.0, 0.43, 1.0)
+  RATIO_LOW       = (0.0, 0.04, 0.33)
+  RATIO_MED       = (0.0, 0.0, 0.23)
+  SRV_HIGH        = (0, 0.06, 5.0)
+  SRV_LOW         = (0, 0.55, 3.08)
+  SRV_MED         = (0, 0.08, 0.3)
+
+  Rule Weights = [0.94, 1.0, 1.0, 1.0, 1.0, 1.0, 1.66, 1.0, 1.0, 1.0, 1.07, 1.0, 1.0]
